@@ -1,38 +1,80 @@
 services:
-  db:
+  user_db:
     image: postgres:15
     environment:
-      POSTGRES_USER:   sttuser
-      POSTGRES_PASSWORD: sttpass
-      POSTGRES_DB:     stt
+      POSTGRES_USER: user_user
+      POSTGRES_PASSWORD: user_pass
+      POSTGRES_DB: user_db
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - user_data:/var/lib/postgresql/data
+
+  transcriber_db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: transcriber_user
+      POSTGRES_PASSWORD: transcriber_pass
+      POSTGRES_DB: transcriber_db
+    volumes:
+      - transcriber_data:/var/lib/postgresql/data
+
+  search_db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: search_user
+      POSTGRES_PASSWORD: search_pass
+      POSTGRES_DB: search_db
+    volumes:
+      - search_data:/var/lib/postgresql/data
+
+  user-service:
+    build: ./user-service
+    environment:
+      USER_DB_URL: postgresql://user_user:user_pass@user_db:5432/user_db
+    depends_on:
+      - user_db
 
   transcriber:
     build: ./transcriber
-    depends_on: [db]
     environment:
-      DATABASE_URL: postgresql://sttuser:sttpass@db:5432/stt
+      TRANSCRIBER_DB_URL: postgresql://transcriber_user:transcriber_pass@transcriber_db:5432/transcriber_db
+      USER_SERVICE_URL: http://user-service:8000
+    depends_on:
+      - transcriber_db
+      - user-service
 
   search:
     build: ./search
-    depends_on: [db]
     environment:
-      DATABASE_URL: postgresql://sttuser:sttpass@db:5432/stt
+      SEARCH_DB_URL: postgresql://search_user:search_pass@search_db:5432/search_db
+      TRANSCRIBER_SERVICE_URL: http://transcriber:8000
+      USER_SERVICE_URL: http://user-service:8000
+    depends_on:
+      - search_db
+      - transcriber
+      - user-service
 
   frontend:
     build: ./frontend
-    depends_on: [transcriber, search]
     environment:
       API_URL: http://nginx
+    depends_on:
+      - transcriber
+      - search
+      - user-service
 
   nginx:
     image: nginx:stable-alpine
     ports:
       - "80:80"
-    depends_on: [frontend, transcriber, search]
+    depends_on:
+      - frontend
+      - transcriber
+      - search
+      - user-service
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
 
 volumes:
-  db_data:
+  user_data:
+  transcriber_data:
+  search_data:

@@ -1,36 +1,69 @@
-import os, tempfile, datetime
-from flask import Flask, request, jsonify
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from fastapi import FastAPI, UploadFile, File, WebSocket, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import tempfile
+import os
 from engine import transcribe
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
+import httpx
 
-app = Flask(__name__)
+app = FastAPI()
 engine = create_engine(os.environ['DATABASE_URL'])
-Base = declarative_base()
 Session = sessionmaker(bind=engine)
+TRANSCRIBER_DB_URL = os.environ['TRANSCRIBER_DB_URL']
+USER_SERVICE_URL = os.environ['USER_SERVICE_URL']
 
-class Transcription(Base):
-    __tablename__ = 'transcriptions'
-    id = Column(Integer, primary_key=True)
-    user_id = Column(String, index=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
-    text = Column(Text)
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with your frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-Base.metadata.create_all(engine)
+@app.post("/transcribe")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    user_id: int = None,
+    conversation_id: int = None
+):
+    if not user_id or not conversation_id:
+        return {"error": "user_id and conversation_id are required"}
+    
+    # Verify user exists via user service
+    async with httpx.AsyncClient() as client:
+        user_response = await client.get(f"{USER_SERVICE_URL}/users/{user_id}")
+        if user_response.status_code != 200:
+            raise HTTPException(status_code=404, detail="User not found")
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+        content = await file.read()
+        temp_file.write(content)
+        temp_file.flush()
+        
+        transcription = transcribe(temp_file.name)
+        
+        # Store in transcriber's database
+        async with httpx.AsyncClient() as client:
+            await client.post(f"{TRANSCRIBER_DB_URL}/transcriptions", json={
+                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "text": transcription
+            })
+        
+        os.unlink(temp_file.name)
+        
+        return {"transcription": transcription}
 
-@app.route('/transcribe', methods=['POST'])
-def do_transcribe():
-    user_id = request.form.get('user_id')
-    f = request.files['file']
-    tmp = tempfile.NamedTemporaryFile(delete=False)
-    f.save(tmp.name)
-    text = transcribe(tmp.name)
-    db = Session()
-    rec = Transcription(user_id=user_id, text=text)
-    db.add(rec)
-    db.commit()
-    return jsonify({'ok': True, 'text': text})
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+@app.websocket("/ws/{user_id}/{conversation_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int, conversation_id: int):
+    await websocket.accept()
+    try:
+        while True:
+            audio_data = await websocket.receive_bytes()
+            # Process audio data and store transcription
+            # Similar to above but with streaming
+    except:
+        await websocket.close()
