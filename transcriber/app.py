@@ -5,14 +5,16 @@ import os
 from engine import transcribe
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime
+from datetime import datetime, timezone
 import httpx
+from models import Transcription, Base
 
 app = FastAPI()
-engine = create_engine(os.environ['DATABASE_URL'])
+engine = create_engine(os.environ['TRANSCRIBER_DB_URL'])
 Session = sessionmaker(bind=engine)
-TRANSCRIBER_DB_URL = os.environ['TRANSCRIBER_DB_URL']
-USER_SERVICE_URL = os.environ['USER_SERVICE_URL']
+
+# Create tables
+Base.metadata.create_all(engine)
 
 # Add CORS middleware
 app.add_middleware(
@@ -23,18 +25,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/transcriptions")
+async def get_transcriptions(conversation_id: str):
+    db = Session()
+    transcriptions = db.query(Transcription).filter(
+        Transcription.conversation_id == conversation_id
+    ).all()
+    
+    return [
+        {
+            "user_id": t.user_id,
+            "text": t.text,
+            "timestamp": t.timestamp.isoformat()
+        }
+        for t in transcriptions
+    ]
+
 @app.post("/transcribe")
 async def transcribe_audio(
     file: UploadFile = File(...),
     user_id: int = None,
-    conversation_id: int = None
+    conversation_id: str = None
 ):
     if not user_id or not conversation_id:
         return {"error": "user_id and conversation_id are required"}
     
     # Verify user exists via user service
     async with httpx.AsyncClient() as client:
-        user_response = await client.get(f"{USER_SERVICE_URL}/users/{user_id}")
+        user_response = await client.get(f"{os.environ['USER_SERVICE_URL']}/users/{user_id}")
         if user_response.status_code != 200:
             raise HTTPException(status_code=404, detail="User not found")
     
@@ -45,13 +63,15 @@ async def transcribe_audio(
         
         transcription = transcribe(temp_file.name)
         
-        # Store in transcriber's database
-        async with httpx.AsyncClient() as client:
-            await client.post(f"{TRANSCRIBER_DB_URL}/transcriptions", json={
-                "user_id": user_id,
-                "conversation_id": conversation_id,
-                "text": transcription
-            })
+        # Store in database
+        db = Session()
+        db.add(Transcription(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            text=transcription,
+            timestamp=datetime.now(timezone.utc)
+        ))
+        db.commit()
         
         os.unlink(temp_file.name)
         

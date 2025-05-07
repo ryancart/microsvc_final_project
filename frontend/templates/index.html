@@ -1,33 +1,214 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
 <head>
-  <title>STT Service</title>
+    <title>Transcription App</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .error { color: red; margin: 10px 0; }
+        .success { color: green; margin: 10px 0; }
+        .container { margin: 20px 0; padding: 20px; border: 1px solid #ccc; border-radius: 5px; }
+        input, button { margin: 5px 0; padding: 5px; }
+        .conversation-list { margin: 10px 0; }
+        .conversation-item { padding: 10px; border: 1px solid #eee; margin: 5px 0; }
+        .recording { color: red; }
+    </style>
 </head>
 <body>
-  <h1>Speech → Text</h1>
-  <form id="frm" enctype="multipart/form-data">
-    <input name="user_id" placeholder="Your user ID" required><br>
-    <input type="file" name="audio" accept="audio/*" required><br>
-    <button>Transcribe</button>
-  </form>
-  <pre id="out"></pre>
+    <h1>Transcription App</h1>
+    
+    <div id="error" class="error" style="display: none;"></div>
+    <div id="success" class="success" style="display: none;"></div>
 
-  <h2>Search</h2>
-  <input id="sid" placeholder="Your user ID"><button id="srch">Get Conversation</button>
-  <pre id="conv"></pre>
+    <div class="container">
+        <h2>Register</h2>
+        <input type="text" id="username" placeholder="Enter your name">
+        <button onclick="register()">Register</button>
+    </div>
 
-  <script>
-  document.getElementById('frm').onsubmit = async e => {
-    e.preventDefault();
-    let data = new FormData(e.target);
-    let res = await fetch('/upload',{method:'POST',body:data});
-    document.getElementById('out').innerText = JSON.stringify(await res.json(),null,2);
-  };
-  document.getElementById('srch').onclick = async () => {
-    let uid = document.getElementById('sid').value;
-    let res = await fetch(`/do_search?user_id=${uid}`);
-    document.getElementById('conv').innerText = JSON.stringify(await res.json(),null,2);
-  };
-  </script>
+    <div class="container" id="conversationSection" style="display: none;">
+        <h2>Conversations</h2>
+        <div class="conversation-list" id="conversationList"></div>
+        
+        <h3>Create New Conversation</h3>
+        <input type="text" id="conversation_name" placeholder="Enter conversation name">
+        <button onclick="createConversation()">Create Conversation</button>
+    </div>
+
+    <div class="container" id="recordingSection" style="display: none;">
+        <h2>Record Audio</h2>
+        <div id="recordingStatus"></div>
+        <button id="recordButton" onclick="toggleRecording()">Start Recording</button>
+        <div id="transcriptionOutput"></div>
+    </div>
+
+    <script>
+        let userId = null;
+        let currentConversationId = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => errorDiv.style.display = 'none', 5000);
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.getElementById('success');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            setTimeout(() => successDiv.style.display = 'none', 5000);
+        }
+
+        async function register() {
+            const username = document.getElementById('username').value;
+            if (!username) {
+                showError('Please enter your name');
+                return;
+            }
+
+            try {
+                const response = await fetch('/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `username=${encodeURIComponent(username)}`
+                });
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Registration failed');
+                }
+                
+                userId = data.id;
+                showSuccess(`Registered successfully! Your ID is: ${userId}`);
+                document.getElementById('conversationSection').style.display = 'block';
+                loadConversations();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function loadConversations() {
+            try {
+                const response = await fetch(`/conversations?user_id=${userId}`);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to load conversations');
+                }
+                
+                const conversationList = document.getElementById('conversationList');
+                conversationList.innerHTML = data.conversations.map(conv => `
+                    <div class="conversation-item">
+                        <strong>${conv.name}</strong>
+                        <button onclick="joinConversation('${conv.id}')">Join</button>
+                    </div>
+                `).join('');
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function createConversation() {
+            if (!userId) {
+                showError('Please register first');
+                return;
+            }
+
+            const conversationName = document.getElementById('conversation_name').value;
+            if (!conversationName) {
+                showError('Please enter a conversation name');
+                return;
+            }
+
+            try {
+                const response = await fetch('/conversations', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: `user_id=${userId}&conversation_name=${encodeURIComponent(conversationName)}`
+                });
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to create conversation');
+                }
+                
+                showSuccess(`Conversation created! ID: ${data.id}`);
+                loadConversations();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function joinConversation(conversationId) {
+            currentConversationId = conversationId;
+            document.getElementById('recordingSection').style.display = 'block';
+            showSuccess(`Joined conversation: ${conversationId}`);
+        }
+
+        async function toggleRecording() {
+            if (!isRecording) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        await sendAudio(audioBlob);
+                    };
+
+                    mediaRecorder.start();
+                    isRecording = true;
+                    document.getElementById('recordButton').textContent = 'Stop Recording';
+                    document.getElementById('recordingStatus').innerHTML = '<span class="recording">Recording...</span>';
+                } catch (error) {
+                    showError('Error accessing microphone: ' + error.message);
+                }
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                document.getElementById('recordButton').textContent = 'Start Recording';
+                document.getElementById('recordingStatus').innerHTML = '';
+            }
+        }
+
+        async function sendAudio(audioBlob) {
+            if (!currentConversationId) {
+                showError('Please join a conversation first');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', audioBlob, 'recording.wav');
+            formData.append('user_id', userId);
+            formData.append('conversation_id', currentConversationId);
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Upload failed');
+                }
+                
+                document.getElementById('transcriptionOutput').innerHTML += 
+                    `<p><strong>You:</strong> ${data.transcription}</p>`;
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+    </script>
 </body>
 </html>

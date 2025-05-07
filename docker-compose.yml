@@ -2,79 +2,95 @@ services:
   user_db:
     image: postgres:15
     environment:
-      POSTGRES_USER: user_user
-      POSTGRES_PASSWORD: user_pass
+      POSTGRES_USER: user_db_user
+      POSTGRES_PASSWORD: user_db_password
       POSTGRES_DB: user_db
     volumes:
-      - user_data:/var/lib/postgresql/data
+      - user_db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user_db_user -d user_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   transcriber_db:
     image: postgres:15
     environment:
       POSTGRES_USER: transcriber_user
-      POSTGRES_PASSWORD: transcriber_pass
+      POSTGRES_PASSWORD: transcriber_password
       POSTGRES_DB: transcriber_db
     volumes:
-      - transcriber_data:/var/lib/postgresql/data
+      - transcriber_db_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transcriber_user -d transcriber_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   search_db:
     image: postgres:15
     environment:
       POSTGRES_USER: search_user
-      POSTGRES_PASSWORD: search_pass
+      POSTGRES_PASSWORD: search_password
       POSTGRES_DB: search_db
     volumes:
-      - search_data:/var/lib/postgresql/data
+      - search_db_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U search_user -d search_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   user-service:
     build: ./user-service
     environment:
-      USER_DB_URL: postgresql://user_user:user_pass@user_db:5432/user_db
+      USER_DB_URL: postgresql://user_db_user:user_db_password@user_db:5432/user_db
     depends_on:
-      - user_db
+      user_db:
+        condition: service_healthy
 
   transcriber:
     build: ./transcriber
     environment:
-      TRANSCRIBER_DB_URL: postgresql://transcriber_user:transcriber_pass@transcriber_db:5432/transcriber_db
-      USER_SERVICE_URL: http://user-service:8000
+      TRANSCRIBER_DB_URL: postgresql://transcriber_user:transcriber_password@transcriber_db:5432/transcriber_db
     depends_on:
-      - transcriber_db
-      - user-service
+      transcriber_db:
+        condition: service_healthy
 
   search:
     build: ./search
     environment:
-      SEARCH_DB_URL: postgresql://search_user:search_pass@search_db:5432/search_db
+      SEARCH_DB_URL: postgresql://search_user:search_password@search_db:5432/search_db
       TRANSCRIBER_SERVICE_URL: http://transcriber:8000
       USER_SERVICE_URL: http://user-service:8000
     depends_on:
-      - search_db
-      - transcriber
-      - user-service
+      search_db:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
     environment:
       API_URL: http://nginx
-    depends_on:
-      - transcriber
-      - search
-      - user-service
 
   nginx:
-    image: nginx:stable-alpine
+    image: nginx:latest
     ports:
       - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
       - frontend
       - transcriber
       - search
       - user-service
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
 
 volumes:
-  user_data:
-  transcriber_data:
-  search_data:
+  user_db_data:
+  transcriber_db_data:
+  search_db_data:
