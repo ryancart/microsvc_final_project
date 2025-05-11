@@ -1,103 +1,51 @@
+from flask import Flask, render_template, request, redirect, url_for # type: ignore
+# import requests
 import os
-from flask import Flask, render_template, request, redirect, url_for, jsonify
-import requests
+import sys
+import urllib.parse
 
 app = Flask(__name__)
-API_URL = os.environ.get('API_URL', 'http://nginx')
+app.debug = True
+conversations = [
+    {"id": 1, "conversation_name": "None"}
+]
 
-@app.route('/')
+users = [
+    {"first_name": "Enter", "last_name": "Name"}
+]
+
+@app.route("/", methods=["GET"])
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/register', methods=['POST'])
-def register():
-    try:
-        username = request.form.get('username')
-        if not username:
-            return jsonify({"error": "Username is required"}), 400
-
-        response = requests.post(
-            f"{API_URL}/api/users",
-            json={"username": username},
-            headers={'Content-Type': 'application/json'}
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        error_msg = e.response.json().get('detail', str(e)) if hasattr(e, 'response') else str(e)
-        return jsonify({"error": error_msg}), 500
-
-@app.route('/conversations', methods=['GET'])
-def get_conversations():
-    try:
-        user_id = request.args.get('user_id')
-        if not user_id:
-            return jsonify({"error": "User ID is required"}), 400
-
-        response = requests.get(f"{API_URL}/api/conversations", params={'user_id': user_id})
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        error_msg = e.response.json().get('detail', str(e)) if hasattr(e, 'response') else str(e)
-        return jsonify({"error": error_msg}), 500
-
-@app.route('/conversations', methods=['POST'])
-def create_conversation():
-    try:
-        user_id = request.form.get('user_id')
-        conversation_name = request.form.get('conversation_name')
-        
-        if not user_id or not conversation_name:
-            return jsonify({"error": "User ID and conversation name are required"}), 400
-
-        response = requests.post(
-            f"{API_URL}/api/conversations",
-            json={
-                "name": conversation_name,
-                "user_id": int(user_id)
+@app.route("/welcome", methods=["GET", "POST"])
+def welcome():
+    if request.method == "POST":
+        result = request.form 
+        users[0] = {
+            "first_name": result.get("first_name", ""),
+            "last_name": result.get("last_name", "")
             }
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        error_msg = e.response.json().get('detail', str(e)) if hasattr(e, 'response') else str(e)
-        return jsonify({"error": error_msg}), 500
-
-@app.route('/upload', methods=['POST'])
-def upload():
-    try:
-        if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-
-        file = request.files['file']
-        user_id = request.form.get('user_id')
-        conversation_id = request.form.get('conversation_id')
-
-        if not user_id or not conversation_id:
-            return jsonify({"error": "User ID and conversation ID are required"}), 400
-
-        files = {'file': (file.filename, file.stream, file.content_type)}
-        data = {
-            'user_id': int(user_id),
-            'conversation_id': conversation_id
+        conversations[0] = {
+            "id": 1,
+            "conversation_name": result.get("conversation_name", "")
         }
+        name = f"{users[0]['first_name']}"
+        print(users[0], file=sys.stderr)
+        print(conversations[0], file=sys.stderr)
+        return render_template("welcome.html", result=result, name=name)
+    return render_template("welcome.html", result={})
+    # return redirect(url_for('success', name=user)) use redirect like this to send to different endpoint
+    
+@app.route("/join_conversation", methods=["GET"])
+def join_conversation():
+    user = f"{users[0]['first_name']} {users[0]['last_name']}"
+    conv = conversations[0]['conversation_name']
+    # redirect_url = f"http://transcriber-service:8002/start?user={urllib.parse.quote(user)}&conv={urllib.parse.quote(conv)}"
+    redirect_url = f"http://localhost:8002/start?user={urllib.parse.quote(user)}&conv={urllib.parse.quote(conv)}"
+    return redirect(redirect_url)
 
-        response = requests.post(f"{API_URL}/api/transcribe", files=files, data=data)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        error_msg = e.response.json().get('detail', str(e)) if hasattr(e, 'response') else str(e)
-        return jsonify({"error": error_msg}), 500
 
-@app.route('/do_search', methods=['GET'])
-def do_search():
-    try:
-        conversation_id = request.args.get('conversation_id')
-        resp = requests.get(f"{API_URL}/api/search", params={'conversation_id': conversation_id})
-        resp.raise_for_status()
-        return jsonify(resp.json())
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+    app.run(debug=True, port=5005)

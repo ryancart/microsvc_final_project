@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+    <body>
+        <h3>Welcome, {{name}}. Join the conversation now or make a correction.</h3>
+        <table border = 1>
+            {% for key, value in result.items() %}
+                <tr>
+                    <th>{{ key }}</th>
+                    <td>{{ value }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+        <form action="/join_conversation" method="GET">
+            <button type="submit">Join Conversation</button>
+        </form>
+        <form action="/" method="GET">
+            <button type="submit">Try again</button>
+        </form>
+    </body>
+</html>
