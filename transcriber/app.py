@@ -19,8 +19,9 @@ socketio = SocketIO(app, cors_allowed_origins='*', async_mode='gevent')
 record_queue = queue.Queue()
 audio_buffer = deque(maxlen=10) # maxlen * 15s
 buffer_lock = Lock()
-users = []
-conversations = []
+# users = []
+# conversations = []
+user_sessions = {}
 
 transcribe_thread_started = False
 write2db_thread_started = False
@@ -52,21 +53,28 @@ def transcription_worker():
         try:
             raw_audio = b"".join(slice)
             text = transcribe(raw_audio)
-            print(f"[rolling-transcribe] {text}", file=sys.stderr)
+            
+            sid = next(iter(socketio.server.manager.get_participants('/', '/')), None)
+            user_info = user_sessions.get(sid, {
+                "first_name": "unknown",
+                "last_name": "unknown",
+                "conversation": "unknown"
+            })
+
             socketio.emit("transcription", {
                 "text": text,
-                "speaker": users[0] if users else "unknown",
+                "speaker": f"{user_info['first_name']} {user_info['last_name']}",
                 "timestamp": time.time()
-                })
-            user = users[0]
-            rec = {
-                "first_name":        user["first_name"],
-                "last_name":         user["last_name"],
-                "conversation_name": conversations[0],
+            })
+
+            record = {
+                "first_name":        user_info["first_name"],
+                "last_name":         user_info["last_name"],
+                "conversation_name": user_info["conversation"],
                 "text":              text,
                 "created_at":        datetime.now(timezone.utc).isoformat()
             }
-            record_queue.put(rec)
+            record_queue.put(record)
         except Exception as e:
             print(f"[transcribe ERROR] {e}", file=sys.stderr)
     
@@ -88,10 +96,16 @@ def db_worker():
             
 @socketio.on('connect')
 def on_connect():
-    print("[transcriber] client connected", file=sys.stderr)
+    sid = request.sid
+    print(f"[transcriber] client connected: {sid}", file=sys.stderr)
     
     global transcribe_thread_started
     global write2db_thread_started
+    
+    environ = request.environ
+    if "pending_user" in environ:
+        user_sessions[sid] = environ["pending_user"]
+        print(f"[transcriber] bound user to sid {sid}", file=sys.stderr)
     
     if not transcribe_thread_started:
         print("[transcriber] launching transcription thread", file=sys.stderr)
@@ -124,15 +138,14 @@ def start():
     first_name = parts[0]
     last_name  = parts[1] if len(parts) > 1 else ""
     conversation = request.args.get("conv", "")
-    users.append({
+    request.environ["pending_user"] = {
         "first_name": first_name,
-        "last_name":  last_name
-    })
-    conversations.append(conversation)
+        "last_name":  last_name,
+        "conversation": conversation
+    }
 
     print(f"First: {first_name!r}, Last: {last_name!r}", file=sys.stderr)
-    print(conversations[0], file=sys.stderr)
-    # return redirect(url_for('get_transcriber', name=users[0], conversation=conversations[0]))
+    print(conversation, file=sys.stderr)
     return redirect(url_for('get_transcriber', name=first_name, conversation=conversation))
 
 
