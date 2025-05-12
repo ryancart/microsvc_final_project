@@ -20,13 +20,14 @@
     function start() {
         navigator.mediaDevices.getUserMedia({ audio: true }).then(s => {
             stream = s;
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
             input = audioContext.createMediaStreamSource(stream);
             processor = audioContext.createScriptProcessor(4096, 1, 1);
 
             processor.onaudioprocess = e => {
                 const chunk = e.inputBuffer.getChannelData(0);
                 audioBuffer.push(new Float32Array(chunk));
+                console.log("[client] audioBuffer length:", audioBuffer.length);
             };
 
             input.connect(processor);
@@ -34,12 +35,14 @@
 
             console.log("Recording...");
 
-            // every 30 seconds send a WAV file
+            // every 5 seconds send a WAV file
             sendInterval = setInterval(() => {
+                console.log("[client] sendInterval fired — buffer:", audioBuffer.length);
                 if (audioBuffer.length > 0) {
                     const wavBlob = exportWAV(audioBuffer, audioContext.sampleRate);
                     wavBlob.arrayBuffer().then(buffer => {
-                        socket.emit("audio_chunk", buffer);
+                        socket.emit("audio_chunk", new Uint8Array(buffer));
+                        console.log("[client] emitted audio_chunk", buffer.byteLength);
                     });
                     audioBuffer = [];
                 }
@@ -111,6 +114,8 @@
     socket.on("transcription", data => {
         document.getElementById("output").innerText = data.text;
     });
+    socket.on("connect", () => console.log("[client] socket connected", socket.id));
+    socket.on("connect_error", e => console.error("[client] socket error:", e));
     </script>
 </body>
 </html>

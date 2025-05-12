@@ -52,7 +52,7 @@ services:
       - ./transcriber:/app
     ports:
       - "8002:8002"
-    command: gunicorn -k gevent -w 1 -b 0.0.0.0:8002 app:app --timeout 100
+    command: gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 -b 0.0.0.0:8002 app:app --timeout 100
     restart: unless-stopped
 
   # search:

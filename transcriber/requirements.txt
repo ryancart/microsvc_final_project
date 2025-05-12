@@ -1,8 +1,10 @@
 flask
 flask_socketio 
 gevent
+gevent-websocket
 gunicorn
 transformers
 torch
 torchaudio
 watchdog
+soundfile
