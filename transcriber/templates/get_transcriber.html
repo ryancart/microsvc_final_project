@@ -11,7 +11,18 @@
     <button onclick="stop()">Stop</button>
 
     <script>
-    const socket = io("http://localhost:8002"); // or container host via nginx
+    const urlParams = new URLSearchParams(window.location.search);
+    const first_name = urlParams.get("first_name") || "unknown";
+    const last_name = urlParams.get("last_name") || "unknown";
+    const conversation = urlParams.get("conversation") || "unknown";
+    
+    const socket = io("http://localhost:8002", {
+        query: {
+            first_name,
+            last_name,
+            conversation
+        }
+    }); // or container host via nginx
 
     let audioContext, processor, input, stream;
     let audioBuffer = [];

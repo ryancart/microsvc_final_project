@@ -19,9 +19,7 @@ socketio = SocketIO(app, cors_allowed_origins='*', async_mode='gevent')
 record_queue = queue.Queue()
 audio_buffer = deque(maxlen=10) # maxlen * 15s
 buffer_lock = Lock()
-# users = []
-# conversations = []
-user_sessions = {}
+session_data = {}
 
 transcribe_thread_started = False
 write2db_thread_started = False
@@ -54,27 +52,23 @@ def transcription_worker():
             raw_audio = b"".join(slice)
             text = transcribe(raw_audio)
             
-            sid = next(iter(socketio.server.manager.get_participants('/', '/')), None)
-            user_info = user_sessions.get(sid, {
-                "first_name": "unknown",
-                "last_name": "unknown",
-                "conversation": "unknown"
-            })
+            for sid, user in session_data.items():
+                record = {
+                    "first_name":        user["first_name"],
+                    "last_name":         user["last_name"],
+                    "conversation_name": user["conversation"],
+                    "text":              text,
+                    "created_at":        datetime.now(timezone.utc).isoformat()
+                }
+                
+                socketio.emit("transcription", {
+                    "text": text,
+                    "speaker": f"{user['first_name']} {user['last_name']}",
+                    "timestamp": time.time()
+                }, to=sid)
 
-            socketio.emit("transcription", {
-                "text": text,
-                "speaker": f"{user_info['first_name']} {user_info['last_name']}",
-                "timestamp": time.time()
-            })
-
-            record = {
-                "first_name":        user_info["first_name"],
-                "last_name":         user_info["last_name"],
-                "conversation_name": user_info["conversation"],
-                "text":              text,
-                "created_at":        datetime.now(timezone.utc).isoformat()
-            }
-            record_queue.put(record)
+                record_queue.put(record)
+                
         except Exception as e:
             print(f"[transcribe ERROR] {e}", file=sys.stderr)
     
@@ -97,15 +91,19 @@ def db_worker():
 @socketio.on('connect')
 def on_connect():
     sid = request.sid
+    args = request.args
+    session_data[sid] = {
+        "first_name": args.get("first_name", "unknown"),
+        "last_name": args.get("last_name", "unknown"),
+        "conversation": args.get("conversation", "unknown")
+    }
+    
     print(f"[transcriber] client connected: {sid}", file=sys.stderr)
     
     global transcribe_thread_started
     global write2db_thread_started
     
-    environ = request.environ
-    if "pending_user" in environ:
-        user_sessions[sid] = environ["pending_user"]
-        print(f"[transcriber] bound user to sid {sid}", file=sys.stderr)
+
     
     if not transcribe_thread_started:
         print("[transcriber] launching transcription thread", file=sys.stderr)
@@ -132,7 +130,6 @@ def handle_audio_chunk(data):
 
 @app.route('/start', methods=['GET'])
 def start():
-    # user = request.args.get("user", "")
     user_str = request.args.get("user", "").strip()
     parts = user_str.split(' ', 1)
     first_name = parts[0]
@@ -146,7 +143,7 @@ def start():
 
     print(f"First: {first_name!r}, Last: {last_name!r}", file=sys.stderr)
     print(conversation, file=sys.stderr)
-    return redirect(url_for('get_transcriber', name=first_name, conversation=conversation))
+    return redirect(url_for('get_transcriber', name=first_name, last_name=last_name, conversation=conversation))
 
 
 @app.route('/get_transcriber', methods=['GET', 'POST'])

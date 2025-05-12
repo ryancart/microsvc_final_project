@@ -26,20 +26,6 @@ services:
     command: gunicorn -k gevent -w 1 -b 0.0.0.0:5005 app:app --timeout 100
     restart: unless-stopped
 
-  # user-service:
-  #   build: ./user-service
-  #   volumes:
-  #     - ./db/users:/data   # SQLite file lives here
-  #   expose:
-  #     - "8001"
-  #   restart: unless-stopped
-
-  # transcriber-template:
-  #   build: ./transcriber-service
-  #   volumes:
-  #     - ./db/transcribers/template:/data  # template path; override per-user in real deploy
-  #   expose:
-  #     - "8002"
   transcriber-service:
     build:
       context: ./transcriber
@@ -55,12 +41,14 @@ services:
     command: gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 -b 0.0.0.0:8002 app:app --timeout 100
     restart: unless-stopped
 
-  # search:
-  #   build: ./search
-  #   depends_on:
-  #     - user-service
-  #     - transcriber
-  #   restart: unless-stopped
+  search:
+    build: ./search
+    ports:
+      - "8003:8003"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
   database:
     build: ./database
     ports:

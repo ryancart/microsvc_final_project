@@ -27,15 +27,17 @@ def transcribe(audio_bytes: bytes) -> str:
     waveform_np = waveform.squeeze(0).numpy()
     print(f"[transcribe] peak after squeeze: {waveform.abs().max().item():.5f}", file=sys.stderr)
     
-    input_features = processor(
+    processed = processor(
         waveform_np, 
         sampling_rate=sr, 
         return_tensors="pt", 
         return_attention_mask=True
-        ).input_features.to('cuda')
+        )
+    input_features = processed.input_features.to('cuda')
+    attention_mask = processed.attention_mask.to('cuda')
     
     with torch.no_grad():
-        predicted_ids = model.generate(input_features)
+        predicted_ids = model.generate(input_features, attention_mask=attention_mask)
 
     transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)
     print(f"[transcribe] result: {transcription}", file=sys.stderr)

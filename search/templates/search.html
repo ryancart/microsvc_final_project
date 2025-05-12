@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Search Conversation</title>
+</head>
+<body>
+    <h1>Search Conversation</h1>
+    <form method="get" action="/search">
+        <label for="conversation">Conversation Name:</label>
+        <input type="text" id="conversation" name="conversation" required>
+        <button type="submit">Search</button>
+    </form>
+
+    {% if conversation %}
+    <h2>Conversation: {{ conversation_name }}</h2>
+    <ul>
+        {% for line in conversation %}
+        <li>{{ line }}</li>
+        {% endfor %}
+    </ul>
+    {% elif error %}
+    <p style="color: red;">{{ error }}</p>
+    {% endif %}
+</body>
+</html>
