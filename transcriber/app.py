@@ -7,28 +7,34 @@ import sys
 from collections import deque
 from threading import Thread, Lock
 import time
-
+import queue
+import threading
+import requests
+from datetime import datetime, timezone
 
 app = Flask(__name__)
 app.debug = True
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='gevent')
 
+record_queue = queue.Queue()
 audio_buffer = deque(maxlen=10) # maxlen * 15s
 buffer_lock = Lock()
 users = []
 conversations = []
 
-thread_started = False
+transcribe_thread_started = False
+write2db_thread_started = False
 
 
 def transcription_worker():
     cycle = 0
     while True:        
-        if cycle == 0 or cycle % 100 == 0:
+        if cycle == 0 or cycle % 10 == 0:
             print("transcription thread alive", file=sys.stderr)
+            buffer_len = len(audio_buffer)
+            print(f"[transcriber] current buffer size: {buffer_len}", file=sys.stderr)
+            
         cycle += 1
-        buffer_len = len(audio_buffer)
-        print(f"[transcriber] current buffer size: {buffer_len}", file=sys.stderr)
         
         with buffer_lock:
             if len(audio_buffer) >= 1:
@@ -52,24 +58,56 @@ def transcription_worker():
                 "speaker": users[0] if users else "unknown",
                 "timestamp": time.time()
                 })
+            user = users[0]
+            rec = {
+                "first_name":        user["first_name"],
+                "last_name":         user["last_name"],
+                "conversation_name": conversations[0],
+                "text":              text,
+                "created_at":        datetime.now(timezone.utc).isoformat()
+            }
+            record_queue.put(rec)
         except Exception as e:
             print(f"[transcribe ERROR] {e}", file=sys.stderr)
+    
+            
+def db_worker():
+    while True:
+        rec = record_queue.get()
+        try:
+            requests.post(
+                "http://database:8004/transcriptions",
+                json=rec,
+                timeout=5
+            )
+        except Exception as e:
+            print(f"[DB ERROR] {e}")
+        finally:
+            record_queue.task_done()          
             
             
 @socketio.on('connect')
 def on_connect():
     print("[transcriber] client connected", file=sys.stderr)
     
-    global thread_started
-    if not thread_started:
+    global transcribe_thread_started
+    global write2db_thread_started
+    
+    if not transcribe_thread_started:
         print("[transcriber] launching transcription thread", file=sys.stderr)
         Thread(target=transcription_worker, daemon=True).start()
-        thread_started = True
+        transcribe_thread_started = True
+        
+    if not write2db_thread_started:
+        print("[transcriber] launching write2db thread", file=sys.stderr)
+        threading.Thread(target=db_worker, daemon=True).start()
+        write2db_thread_started = True
 
 
 @socketio.on("disconnect")
 def on_disconnect():
     print("[transcriber] client disconnected", file=sys.stderr)
+
 
 @socketio.on('audio_chunk')
 def handle_audio_chunk(data):
@@ -80,15 +118,24 @@ def handle_audio_chunk(data):
 
 @app.route('/start', methods=['GET'])
 def start():
-    user = request.args.get("user", "")
+    # user = request.args.get("user", "")
+    user_str = request.args.get("user", "").strip()
+    parts = user_str.split(' ', 1)
+    first_name = parts[0]
+    last_name  = parts[1] if len(parts) > 1 else ""
     conversation = request.args.get("conv", "")
-    users.append(user)
+    users.append({
+        "first_name": first_name,
+        "last_name":  last_name
+    })
     conversations.append(conversation)
-    print(users[0], file=sys.stderr)
-    print(conversations[0], file=sys.stderr)
-    return redirect(url_for('get_transcriber', name=users[0], conversation=conversations[0]))
 
-    
+    print(f"First: {first_name!r}, Last: {last_name!r}", file=sys.stderr)
+    print(conversations[0], file=sys.stderr)
+    # return redirect(url_for('get_transcriber', name=users[0], conversation=conversations[0]))
+    return redirect(url_for('get_transcriber', name=first_name, conversation=conversation))
+
+
 @app.route('/get_transcriber', methods=['GET', 'POST'])
 def get_transcriber():
     return render_template("get_transcriber.html")

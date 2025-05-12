@@ -61,3 +61,16 @@ services:
   #     - user-service
   #     - transcriber
   #   restart: unless-stopped
+  database:
+    build: ./database
+    ports:
+      - "8004:8004"
+    volumes:
+      - database_data:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: gunicorn -k gevent -w 1 -b 0.0.0.0:8004 app:create_app() 
+    restart: unless-stopped
+
+volumes:
+  database_data:
